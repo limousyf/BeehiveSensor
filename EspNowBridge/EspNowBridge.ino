@@ -20,6 +20,9 @@
 #define PI_RX 16
 #define PI_BAUD 9600
 
+// Sensor status flags (bitmask)
+#define STATUS_BME280_OK  0x01
+
 // Must match the struct on the Hive Controller
 typedef struct __attribute__((packed)) {
   char sensor_id[20];
@@ -28,7 +31,8 @@ typedef struct __attribute__((packed)) {
   float pressure;
   float battery_voltage;
   uint8_t battery_pct;
-  uint8_t on_usb;  // 1 = USB powered, 0 = battery
+  uint8_t on_usb;       // 1 = USB powered, 0 = battery
+  uint8_t sensor_status; // bitmask: bit 0 = BME280
 } HivePacket;
 
 void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
@@ -40,12 +44,21 @@ void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   HivePacket pkt;
   memcpy(&pkt, data, sizeof(pkt));
 
-  // Build JSON line
-  char json[256];
-  snprintf(json, sizeof(json),
-    "{\"sensor_id\":\"%s\",\"temp\":%.1f,\"hum\":%.1f,\"press\":%.1f,"
-    "\"batt_v\":%.2f,\"batt_pct\":%d,\"power\":\"%s\"}",
-    pkt.sensor_id, pkt.temperature, pkt.humidity, pkt.pressure,
+  // Build JSON line with sensor status
+  bool hasBme = (pkt.sensor_status & STATUS_BME280_OK);
+  char json[300];
+  int pos = snprintf(json, sizeof(json),
+    "{\"sensor_id\":\"%s\",\"bme280\":\"%s\"",
+    pkt.sensor_id, hasBme ? "ok" : "offline");
+
+  if (hasBme) {
+    pos += snprintf(json + pos, sizeof(json) - pos,
+      ",\"temp\":%.1f,\"hum\":%.1f,\"press\":%.1f",
+      pkt.temperature, pkt.humidity, pkt.pressure);
+  }
+
+  snprintf(json + pos, sizeof(json) - pos,
+    ",\"batt_v\":%.2f,\"batt_pct\":%d,\"power\":\"%s\"}",
     pkt.battery_voltage, pkt.battery_pct, pkt.on_usb ? "USB" : "BATT");
 
   // Forward to Pi over UART

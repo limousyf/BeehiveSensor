@@ -60,9 +60,18 @@ def main():
             f.write(json.dumps(data) + "\n")
 
         # Print to console
-        batt = f" Batt:{data.get('batt_v')}V ({data.get('batt_pct')}%) {data.get('power','?')}" if 'batt_v' in data else ""
-        print(f"[{timestamp}] {data.get('sensor_id', '???')}: "
-              f"T={data.get('temp')}C H={data.get('hum')}% P={data.get('press')}hPa{batt}")
+        parts = [f"[{timestamp}] {data.get('sensor_id', '???')}:"]
+
+        bme = data.get('bme280', 'ok')
+        if bme == 'ok' and 'temp' in data:
+            parts.append(f"T={data['temp']}C H={data['hum']}% P={data['press']}hPa")
+        else:
+            parts.append("BME280:OFFLINE")
+
+        if 'batt_v' in data:
+            parts.append(f"Batt:{data['batt_v']}V ({data['batt_pct']}%) {data.get('power','?')}")
+
+        print(" ".join(parts))
 
 
 if __name__ == "__main__":

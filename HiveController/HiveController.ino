@@ -4,6 +4,9 @@
  * Reads BME280 (temp, humidity, pressure) and sends data via
  * one of three radio modes: ESP-NOW, WiFi, or BLE.
  *
+ * Fault-tolerant: sends whatever data is available.
+ * Missing sensors are flagged in the status field.
+ *
  * ESP-NOW mode: broadcast to bridge, then deep sleep.
  * WiFi mode:    serve a web dashboard (stays awake).
  * BLE mode:     advertise BLE characteristics (stays awake).
@@ -12,6 +15,7 @@
  *   - Seeed Studio XIAO ESP32C3
  *   - BME280 on I2C (SDA=D4, SCL=D5, addr 0x76)
  *   - 1x 18650 battery via onboard charge circuit
+ *   - External voltage divider (2x 100kΩ) on A0 for battery ADC
  */
 
 #include <Wire.h>
@@ -39,21 +43,22 @@ const char SENSOR_ID[20] = "HIVE_NODE_01";
 #define I2C_SDA D4
 #define I2C_SCL D5
 
-// Battery voltage ADC pin (XIAO ESP32C3 onboard voltage divider)
+// Battery voltage ADC pin
 #define BATT_ADC_PIN A0
 
 // Voltage threshold to distinguish USB power from battery
-// When USB is connected, the charge IC pushes voltage above ~4.3V
 #define USB_VOLTAGE_THRESHOLD 4.3
 
+// Sensor status flags (bitmask)
+#define STATUS_BME280_OK  0x01
+
 Adafruit_BME280 bme;
+bool bmeAvailable = false;
 
 // Global readings
 float temp = 0.0;
 float humidity = 0.0;
 float pressure = 0.0;
-float battVoltage = 0.0;
-bool onUSB = false;
 
 float readBatteryVoltage() {
   uint32_t raw = analogReadMilliVolts(BATT_ADC_PIN);
@@ -83,7 +88,8 @@ const long interval = 2000;
     float pressure;
     float battery_voltage;
     uint8_t battery_pct;
-    uint8_t on_usb;  // 1 = USB powered, 0 = battery
+    uint8_t on_usb;       // 1 = USB powered, 0 = battery
+    uint8_t sensor_status; // bitmask: bit 0 = BME280
   } HivePacket;
 
   volatile bool sendDone = false;
@@ -115,9 +121,14 @@ const long interval = 2000;
     html += "h1{color:#E6A817;} .meta{color:#888; font-size:16px;}</style></head>";
     html += "<body><h1>Beeyard Hive Controller</h1>";
     html += "<p class='meta'>Sensor ID: <b>" + String(SENSOR_ID) + "</b></p><hr>";
-    html += "<h2>Temp: " + String(temp, 1) + " &deg;C</h2>";
-    html += "<h2>Hum: " + String(humidity, 1) + " %</h2>";
-    html += "<h2>Press: " + String(pressure, 1) + " hPa</h2></body></html>";
+    if (bmeAvailable) {
+      html += "<h2>Temp: " + String(temp, 1) + " &deg;C</h2>";
+      html += "<h2>Hum: " + String(humidity, 1) + " %</h2>";
+      html += "<h2>Press: " + String(pressure, 1) + " hPa</h2>";
+    } else {
+      html += "<h2 style='color:red;'>BME280: OFFLINE</h2>";
+    }
+    html += "</body></html>";
     server.send(200, "text/html", html);
   }
 #endif
@@ -145,13 +156,11 @@ void setup() {
   Serial.println("\n--- Hive Controller Starting ---");
   Serial.printf("Sensor ID: %s\n", SENSOR_ID);
 
-  // Init BME280
+  // Init BME280 (non-fatal if missing)
   Wire.begin(I2C_SDA, I2C_SCL);
-  if (!bme.begin(0x76, &Wire)) {
-    Serial.println("Error: BME280 not found at 0x76!");
-    #if USE_ESPNOW
-      goToSleep();
-    #endif
+  bmeAvailable = bme.begin(0x76, &Wire);
+  if (!bmeAvailable) {
+    Serial.println("[WARN] BME280 not found at 0x76 — skipping");
   } else {
     Serial.println("BME280 (0x76) Initialized.");
   }
@@ -159,16 +168,29 @@ void setup() {
   // --- ESP-NOW: read, send, sleep ---
   #if USE_ESPNOW
     HivePacket pkt;
+    memset(&pkt, 0, sizeof(pkt));
     strncpy(pkt.sensor_id, SENSOR_ID, sizeof(pkt.sensor_id));
-    pkt.temperature = bme.readTemperature();
-    pkt.humidity = bme.readHumidity();
-    pkt.pressure = bme.readPressure() / 100.0F;
+
+    // Build sensor status bitmask
+    pkt.sensor_status = 0;
+    if (bmeAvailable) {
+      pkt.sensor_status |= STATUS_BME280_OK;
+      pkt.temperature = bme.readTemperature();
+      pkt.humidity = bme.readHumidity();
+      pkt.pressure = bme.readPressure() / 100.0F;
+    }
+
+    // Battery is always available (external voltage divider)
     pkt.battery_voltage = readBatteryVoltage();
     pkt.battery_pct = voltageToPct(pkt.battery_voltage);
     pkt.on_usb = (pkt.battery_voltage >= USB_VOLTAGE_THRESHOLD) ? 1 : 0;
 
-    Serial.printf("[HIVE] T:%.1fC H:%.1f%% P:%.1fhPa Batt:%.2fV (%d%%) %s\n",
-      pkt.temperature, pkt.humidity, pkt.pressure,
+    Serial.printf("[HIVE] BME280:%s", bmeAvailable ? "OK" : "OFFLINE");
+    if (bmeAvailable) {
+      Serial.printf(" T:%.1fC H:%.1f%% P:%.1fhPa",
+        pkt.temperature, pkt.humidity, pkt.pressure);
+    }
+    Serial.printf(" Batt:%.2fV (%d%%) %s\n",
       pkt.battery_voltage, pkt.battery_pct,
       pkt.on_usb ? "USB" : "BATT");
 
@@ -251,17 +273,21 @@ void loop() {
   if (currentMillis - previousMillis >= interval) {
     previousMillis = currentMillis;
 
-    temp = bme.readTemperature();
-    humidity = bme.readHumidity();
-    pressure = bme.readPressure() / 100.0F;
+    if (bmeAvailable) {
+      temp = bme.readTemperature();
+      humidity = bme.readHumidity();
+      pressure = bme.readPressure() / 100.0F;
 
-    Serial.printf("[%s] T:%.1fC H:%.1f%% P:%.1fhPa\n",
-      SENSOR_ID, temp, humidity, pressure);
+      Serial.printf("[%s] T:%.1fC H:%.1f%% P:%.1fhPa\n",
+        SENSOR_ID, temp, humidity, pressure);
+    }
 
     #if USE_BLUETOOTH
-      pTempChar->setValue((String(temp, 1) + " C").c_str());
-      pHumChar->setValue((String(humidity, 1) + " %").c_str());
-      pPressChar->setValue((String(pressure, 1) + " hPa").c_str());
+      if (bmeAvailable) {
+        pTempChar->setValue((String(temp, 1) + " C").c_str());
+        pHumChar->setValue((String(humidity, 1) + " %").c_str());
+        pPressChar->setValue((String(pressure, 1) + " hPa").c_str());
+      }
     #endif
   }
 }
