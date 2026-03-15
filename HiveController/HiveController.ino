@@ -17,6 +17,8 @@
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
+#include <WiFi.h>
+#include <esp_now.h>
 
 // --- RADIO MODE (pick exactly one) ---
 #define USE_ESPNOW    true
@@ -31,11 +33,18 @@
 const char SENSOR_ID[20] = "HIVE_NODE_01";
 
 // Deep sleep duration (only used in ESP-NOW mode)
-#define SLEEP_SECONDS 300  // 5 minutes
+#define SLEEP_SECONDS 30
 
 // XIAO C3 I2C Pins
 #define I2C_SDA D4
 #define I2C_SCL D5
+
+// Battery voltage ADC pin (XIAO ESP32C3 onboard voltage divider)
+#define BATT_ADC_PIN A0
+
+// Voltage threshold to distinguish USB power from battery
+// When USB is connected, the charge IC pushes voltage above ~4.3V
+#define USB_VOLTAGE_THRESHOLD 4.3
 
 Adafruit_BME280 bme;
 
@@ -43,15 +52,27 @@ Adafruit_BME280 bme;
 float temp = 0.0;
 float humidity = 0.0;
 float pressure = 0.0;
+float battVoltage = 0.0;
+bool onUSB = false;
+
+float readBatteryVoltage() {
+  uint32_t raw = analogReadMilliVolts(BATT_ADC_PIN);
+  // External voltage divider (2x 100kΩ) halves the battery voltage
+  return (raw * 2.0) / 1000.0;
+}
+
+uint8_t voltageToPct(float v) {
+  // Rough Li-ion discharge curve: 4.2V=100%, 3.0V=0%
+  if (v >= 4.2) return 100;
+  if (v <= 3.0) return 0;
+  return (uint8_t)((v - 3.0) / 1.2 * 100.0);
+}
 
 unsigned long previousMillis = 0;
 const long interval = 2000;
 
 // --- ESP-NOW ---
 #if USE_ESPNOW
-  #include <esp_now.h>
-  #include <WiFi.h>
-
   uint8_t broadcastAddr[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
   // Must match the struct on the ESP-NOW Bridge
@@ -60,6 +81,9 @@ const long interval = 2000;
     float temperature;
     float humidity;
     float pressure;
+    float battery_voltage;
+    uint8_t battery_pct;
+    uint8_t on_usb;  // 1 = USB powered, 0 = battery
   } HivePacket;
 
   volatile bool sendDone = false;
@@ -80,7 +104,6 @@ const long interval = 2000;
 
 // --- WIFI ---
 #if USE_WIFI
-  #include <WiFi.h>
   #include <WebServer.h>
   const char* ssid = "YOUR_SSID";
   const char* password = "YOUR_PASSWORD";
@@ -117,7 +140,7 @@ const long interval = 2000;
 
 void setup() {
   Serial.begin(115200);
-  delay(100);
+  delay(3000);  // Wait for serial monitor connection
 
   Serial.println("\n--- Hive Controller Starting ---");
   Serial.printf("Sensor ID: %s\n", SENSOR_ID);
@@ -140,9 +163,14 @@ void setup() {
     pkt.temperature = bme.readTemperature();
     pkt.humidity = bme.readHumidity();
     pkt.pressure = bme.readPressure() / 100.0F;
+    pkt.battery_voltage = readBatteryVoltage();
+    pkt.battery_pct = voltageToPct(pkt.battery_voltage);
+    pkt.on_usb = (pkt.battery_voltage >= USB_VOLTAGE_THRESHOLD) ? 1 : 0;
 
-    Serial.printf("[HIVE] T:%.1fC H:%.1f%% P:%.1fhPa\n",
-      pkt.temperature, pkt.humidity, pkt.pressure);
+    Serial.printf("[HIVE] T:%.1fC H:%.1f%% P:%.1fhPa Batt:%.2fV (%d%%) %s\n",
+      pkt.temperature, pkt.humidity, pkt.pressure,
+      pkt.battery_voltage, pkt.battery_pct,
+      pkt.on_usb ? "USB" : "BATT");
 
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
@@ -167,6 +195,7 @@ void setup() {
 
     esp_now_send(broadcastAddr, (uint8_t *)&pkt, sizeof(pkt));
 
+    // Wait for send callback confirmation (with timeout)
     unsigned long start = millis();
     while (!sendDone && (millis() - start < 2000)) {
       delay(1);

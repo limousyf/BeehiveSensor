@@ -5,7 +5,7 @@ Yard Command & Control (Pi Zero W)
 Reads JSON lines from the ESP-NOW bridge over UART
 and logs them to a timestamped file.
 
-UART: /dev/serial0 at 115200 baud
+UART: /dev/serial0 at 9600 baud
   Pi Pin 10 (GPIO15/RXD) <-- ESP32 GPIO17 (TX2)
 """
 
@@ -15,7 +15,7 @@ import os
 from datetime import datetime
 
 SERIAL_PORT = "/dev/serial0"
-BAUD_RATE = 115200
+BAUD_RATE = 9600
 LOG_DIR = os.path.expanduser("~/beeyard_logs")
 
 
@@ -41,6 +41,12 @@ def main():
         # Add a receive timestamp
         timestamp = datetime.now().isoformat()
 
+        # Find the start of JSON in case of leading garbage (ESP32 boot ROM noise)
+        json_start = line.find("{")
+        if json_start == -1:
+            continue
+        line = line[json_start:]
+
         try:
             data = json.loads(line)
             data["received_at"] = timestamp
@@ -54,8 +60,9 @@ def main():
             f.write(json.dumps(data) + "\n")
 
         # Print to console
+        batt = f" Batt:{data.get('batt_v')}V ({data.get('batt_pct')}%) {data.get('power','?')}" if 'batt_v' in data else ""
         print(f"[{timestamp}] {data.get('sensor_id', '???')}: "
-              f"T={data.get('temp')}C H={data.get('hum')}% P={data.get('press')}hPa")
+              f"T={data.get('temp')}C H={data.get('hum')}% P={data.get('press')}hPa{batt}")
 
 
 if __name__ == "__main__":

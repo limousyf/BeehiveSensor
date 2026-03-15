@@ -18,7 +18,7 @@
 #define PI_SERIAL Serial2
 #define PI_TX 17
 #define PI_RX 16
-#define PI_BAUD 115200
+#define PI_BAUD 9600
 
 // Must match the struct on the Hive Controller
 typedef struct __attribute__((packed)) {
@@ -26,6 +26,9 @@ typedef struct __attribute__((packed)) {
   float temperature;
   float humidity;
   float pressure;
+  float battery_voltage;
+  uint8_t battery_pct;
+  uint8_t on_usb;  // 1 = USB powered, 0 = battery
 } HivePacket;
 
 void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
@@ -38,10 +41,12 @@ void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   memcpy(&pkt, data, sizeof(pkt));
 
   // Build JSON line
-  char json[200];
+  char json[256];
   snprintf(json, sizeof(json),
-    "{\"sensor_id\":\"%s\",\"temp\":%.1f,\"hum\":%.1f,\"press\":%.1f}",
-    pkt.sensor_id, pkt.temperature, pkt.humidity, pkt.pressure);
+    "{\"sensor_id\":\"%s\",\"temp\":%.1f,\"hum\":%.1f,\"press\":%.1f,"
+    "\"batt_v\":%.2f,\"batt_pct\":%d,\"power\":\"%s\"}",
+    pkt.sensor_id, pkt.temperature, pkt.humidity, pkt.pressure,
+    pkt.battery_voltage, pkt.battery_pct, pkt.on_usb ? "USB" : "BATT");
 
   // Forward to Pi over UART
   PI_SERIAL.println(json);
