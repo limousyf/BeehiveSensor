@@ -1,0 +1,238 @@
+/*
+ * Hive Controller (XIAO ESP32C3)
+ *
+ * Reads BME280 (temp, humidity, pressure) and sends data via
+ * one of three radio modes: ESP-NOW, WiFi, or BLE.
+ *
+ * ESP-NOW mode: broadcast to bridge, then deep sleep.
+ * WiFi mode:    serve a web dashboard (stays awake).
+ * BLE mode:     advertise BLE characteristics (stays awake).
+ *
+ * Hardware:
+ *   - Seeed Studio XIAO ESP32C3
+ *   - BME280 on I2C (SDA=D4, SCL=D5, addr 0x76)
+ *   - 1x 18650 battery via onboard charge circuit
+ */
+
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BME280.h>
+
+// --- RADIO MODE (pick exactly one) ---
+#define USE_ESPNOW    true
+#define USE_WIFI      false
+#define USE_BLUETOOTH false
+
+#if (USE_ESPNOW + USE_WIFI + USE_BLUETOOTH) != 1
+  #error "Enable exactly ONE radio mode!"
+#endif
+
+// --- SENSOR IDENTIFIER ---
+const char SENSOR_ID[20] = "HIVE_NODE_01";
+
+// Deep sleep duration (only used in ESP-NOW mode)
+#define SLEEP_SECONDS 300  // 5 minutes
+
+// XIAO C3 I2C Pins
+#define I2C_SDA D4
+#define I2C_SCL D5
+
+Adafruit_BME280 bme;
+
+// Global readings
+float temp = 0.0;
+float humidity = 0.0;
+float pressure = 0.0;
+
+unsigned long previousMillis = 0;
+const long interval = 2000;
+
+// --- ESP-NOW ---
+#if USE_ESPNOW
+  #include <esp_now.h>
+  #include <WiFi.h>
+
+  uint8_t broadcastAddr[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+  // Must match the struct on the ESP-NOW Bridge
+  typedef struct __attribute__((packed)) {
+    char sensor_id[20];
+    float temperature;
+    float humidity;
+    float pressure;
+  } HivePacket;
+
+  volatile bool sendDone = false;
+  volatile bool sendOk = false;
+
+  void onDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status) {
+    sendOk = (status == ESP_NOW_SEND_SUCCESS);
+    sendDone = true;
+    Serial.printf("[HIVE] Send %s\n", sendOk ? "OK" : "FAILED");
+  }
+
+  void goToSleep() {
+    Serial.printf("[HIVE] Sleeping for %d seconds...\n", SLEEP_SECONDS);
+    Serial.flush();
+    esp_deep_sleep(SLEEP_SECONDS * 1000000ULL);
+  }
+#endif
+
+// --- WIFI ---
+#if USE_WIFI
+  #include <WiFi.h>
+  #include <WebServer.h>
+  const char* ssid = "YOUR_SSID";
+  const char* password = "YOUR_PASSWORD";
+  WebServer server(80);
+
+  void handleRoot() {
+    String html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1.0'>";
+    html += "<style>body{font-family:sans-serif; text-align:center; margin-top:30px; background-color: #fafafa;}";
+    html += "h1{color:#E6A817;} .meta{color:#888; font-size:16px;}</style></head>";
+    html += "<body><h1>Beeyard Hive Controller</h1>";
+    html += "<p class='meta'>Sensor ID: <b>" + String(SENSOR_ID) + "</b></p><hr>";
+    html += "<h2>Temp: " + String(temp, 1) + " &deg;C</h2>";
+    html += "<h2>Hum: " + String(humidity, 1) + " %</h2>";
+    html += "<h2>Press: " + String(pressure, 1) + " hPa</h2></body></html>";
+    server.send(200, "text/html", html);
+  }
+#endif
+
+// --- BLUETOOTH ---
+#if USE_BLUETOOTH
+  #include <BLEDevice.h>
+  #include <BLEServer.h>
+  #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+  #define ID_CHAR_UUID        "11111111-1fb5-459e-8fcc-c5c9c331914b"
+  #define TEMP_CHAR_UUID      "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+  #define HUM_CHAR_UUID       "8d9830da-e7cc-4bf4-be23-57577884bbbb"
+  #define PRESS_CHAR_UUID     "76a3928e-6b80-4573-a444-15f5cc14ba64"
+
+  BLECharacteristic *pIdChar;
+  BLECharacteristic *pTempChar;
+  BLECharacteristic *pHumChar;
+  BLECharacteristic *pPressChar;
+#endif
+
+void setup() {
+  Serial.begin(115200);
+  delay(100);
+
+  Serial.println("\n--- Hive Controller Starting ---");
+  Serial.printf("Sensor ID: %s\n", SENSOR_ID);
+
+  // Init BME280
+  Wire.begin(I2C_SDA, I2C_SCL);
+  if (!bme.begin(0x76, &Wire)) {
+    Serial.println("Error: BME280 not found at 0x76!");
+    #if USE_ESPNOW
+      goToSleep();
+    #endif
+  } else {
+    Serial.println("BME280 (0x76) Initialized.");
+  }
+
+  // --- ESP-NOW: read, send, sleep ---
+  #if USE_ESPNOW
+    HivePacket pkt;
+    strncpy(pkt.sensor_id, SENSOR_ID, sizeof(pkt.sensor_id));
+    pkt.temperature = bme.readTemperature();
+    pkt.humidity = bme.readHumidity();
+    pkt.pressure = bme.readPressure() / 100.0F;
+
+    Serial.printf("[HIVE] T:%.1fC H:%.1f%% P:%.1fhPa\n",
+      pkt.temperature, pkt.humidity, pkt.pressure);
+
+    WiFi.mode(WIFI_STA);
+    WiFi.disconnect();
+
+    if (esp_now_init() != ESP_OK) {
+      Serial.println("Error: ESP-NOW init failed!");
+      goToSleep();
+    }
+
+    esp_now_register_send_cb(onDataSent);
+
+    esp_now_peer_info_t peer;
+    memset(&peer, 0, sizeof(peer));
+    memcpy(peer.peer_addr, broadcastAddr, 6);
+    peer.channel = 0;
+    peer.encrypt = false;
+
+    if (esp_now_add_peer(&peer) != ESP_OK) {
+      Serial.println("Error: Failed to add broadcast peer!");
+      goToSleep();
+    }
+
+    esp_now_send(broadcastAddr, (uint8_t *)&pkt, sizeof(pkt));
+
+    unsigned long start = millis();
+    while (!sendDone && (millis() - start < 2000)) {
+      delay(1);
+    }
+
+    goToSleep();
+  #endif
+
+  // --- WiFi: start web server ---
+  #if USE_WIFI
+    Serial.print("Connecting to "); Serial.println(ssid);
+    WiFi.begin(ssid, password);
+    while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+    Serial.println("\nWiFi Connected!");
+    Serial.print("Visit IP: "); Serial.println(WiFi.localIP());
+    server.on("/", handleRoot);
+    server.begin();
+  #endif
+
+  // --- BLE: start advertising ---
+  #if USE_BLUETOOTH
+    Serial.println("Starting BLE... (Name: Beeyard_Hive_1)");
+    BLEDevice::init("Beeyard_Hive_1");
+    BLEServer *pServer = BLEDevice::createServer();
+    BLEService *pService = pServer->createService(SERVICE_UUID);
+
+    pIdChar = pService->createCharacteristic(ID_CHAR_UUID, BLECharacteristic::PROPERTY_READ);
+    pTempChar = pService->createCharacteristic(TEMP_CHAR_UUID, BLECharacteristic::PROPERTY_READ);
+    pHumChar = pService->createCharacteristic(HUM_CHAR_UUID, BLECharacteristic::PROPERTY_READ);
+    pPressChar = pService->createCharacteristic(PRESS_CHAR_UUID, BLECharacteristic::PROPERTY_READ);
+
+    pIdChar->setValue(SENSOR_ID);
+
+    pService->start();
+    BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+    pAdvertising->addServiceUUID(SERVICE_UUID);
+    pAdvertising->setScanResponse(true);
+    BLEDevice::startAdvertising();
+    Serial.println("BLE Active.");
+  #endif
+}
+
+void loop() {
+  #if USE_ESPNOW
+    // Never reached — deep sleep resets into setup()
+  #endif
+
+  #if USE_WIFI
+    server.handleClient();
+  #endif
+
+  unsigned long currentMillis = millis();
+  if (currentMillis - previousMillis >= interval) {
+    previousMillis = currentMillis;
+
+    temp = bme.readTemperature();
+    humidity = bme.readHumidity();
+    pressure = bme.readPressure() / 100.0F;
+
+    Serial.printf("[%s] T:%.1fC H:%.1f%% P:%.1fhPa\n",
+      SENSOR_ID, temp, humidity, pressure);
+
+    #if USE_BLUETOOTH
+      pTempChar->setValue((String(temp, 1) + " C").c_str());
+      pHumChar->setValue((String(humidity, 1) + " %").c_str());
+      pPressChar->setValue((String(pressure, 1) + " hPa").c_str());
+    #endif
+  }
+}
