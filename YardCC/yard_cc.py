@@ -69,7 +69,7 @@ def main():
             parts.append("BME280:OFFLINE")
 
         if 'batt_v' in data:
-            parts.append(f"Batt:{data['batt_v']}V ({data['batt_pct']}%) {data.get('power','?')}")
+            parts.append(f"Batt:{data['batt_v']}V ({data['batt_pct']}%)")
 
         print(" ".join(parts))
 

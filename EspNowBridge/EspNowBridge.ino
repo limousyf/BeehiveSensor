@@ -31,7 +31,6 @@ typedef struct __attribute__((packed)) {
   float pressure;
   float battery_voltage;
   uint8_t battery_pct;
-  uint8_t on_usb;       // 1 = USB powered, 0 = battery
   uint8_t sensor_status; // bitmask: bit 0 = BME280
 } HivePacket;
 
@@ -58,8 +57,8 @@ void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   }
 
   snprintf(json + pos, sizeof(json) - pos,
-    ",\"batt_v\":%.2f,\"batt_pct\":%d,\"power\":\"%s\"}",
-    pkt.battery_voltage, pkt.battery_pct, pkt.on_usb ? "USB" : "BATT");
+    ",\"batt_v\":%.2f,\"batt_pct\":%d}",
+    pkt.battery_voltage, pkt.battery_pct);
 
   // Forward to Pi over UART
   PI_SERIAL.println(json);

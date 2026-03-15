@@ -46,9 +46,6 @@ const char SENSOR_ID[20] = "HIVE_NODE_01";
 // Battery voltage ADC pin
 #define BATT_ADC_PIN A0
 
-// Voltage threshold to distinguish USB power from battery
-#define USB_VOLTAGE_THRESHOLD 4.3
-
 // Sensor status flags (bitmask)
 #define STATUS_BME280_OK  0x01
 
@@ -88,7 +85,6 @@ const long interval = 2000;
     float pressure;
     float battery_voltage;
     uint8_t battery_pct;
-    uint8_t on_usb;       // 1 = USB powered, 0 = battery
     uint8_t sensor_status; // bitmask: bit 0 = BME280
   } HivePacket;
 
@@ -183,16 +179,14 @@ void setup() {
     // Battery is always available (external voltage divider)
     pkt.battery_voltage = readBatteryVoltage();
     pkt.battery_pct = voltageToPct(pkt.battery_voltage);
-    pkt.on_usb = (pkt.battery_voltage >= USB_VOLTAGE_THRESHOLD) ? 1 : 0;
 
     Serial.printf("[HIVE] BME280:%s", bmeAvailable ? "OK" : "OFFLINE");
     if (bmeAvailable) {
       Serial.printf(" T:%.1fC H:%.1f%% P:%.1fhPa",
         pkt.temperature, pkt.humidity, pkt.pressure);
     }
-    Serial.printf(" Batt:%.2fV (%d%%) %s\n",
-      pkt.battery_voltage, pkt.battery_pct,
-      pkt.on_usb ? "USB" : "BATT");
+    Serial.printf(" Batt:%.2fV (%d%%)\n",
+      pkt.battery_voltage, pkt.battery_pct);
 
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
