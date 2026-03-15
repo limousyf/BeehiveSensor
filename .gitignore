@@ -1,0 +1,17 @@
+# Build artifacts
+build/
+*.o
+*.elf
+*.bin
+*.hex
+
+# IDE files
+.vscode/
+*.code-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Secrets
+secrets.h
