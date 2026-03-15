@@ -52,6 +52,16 @@ Pi Zero W (Yard C&C)
 - Bit 1 (0x02): reserved for HX711 scale (Phase 1)
 - Bit 2 (0x04): reserved for INMP441 mic (Phase 2)
 
+### TODO
+- [ ] Configurable sleep modes via NVS (rapid/battery-saver/hybrid) with RTC memory for burst counters
+- [ ] BLE admin command channel for runtime mode switching from a mobile app
+- [ ] Local data caching on LittleFS when connectivity fails (requires unicast ESP-NOW or always-cache + dedup)
+- [ ] Admin mode: multi-reset trigger (no hardware) as Phase 1, magnetic reed switch as Phase 2
+- [ ] Admin BLE interface: writable CMD + notifiable RESP characteristics, 5-min auto-timeout
+- [ ] Admin capabilities: live sensor readout, mode switching, test send, battery status, cache management
+- [ ] Reflash both boards after `on_usb` struct removal
+- [ ] Bump `SLEEP_SECONDS` back to 300 for production
+
 ### Development Phases
 - [x] Phase 0: Hive Controller telemetry baseline (T&H + battery + fault tolerance)
 - [ ] Phase 1: HX711 scale integration
