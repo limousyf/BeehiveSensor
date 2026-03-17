@@ -67,12 +67,14 @@ Both nodes transmit independently via ESP-NOW to the bridge.
 - [ ] BLE admin command channel for runtime mode switching from a mobile app
 - [ ] Local data caching on LittleFS when connectivity fails (requires unicast ESP-NOW or always-cache + dedup)
 - [ ] Admin mode: multi-reset trigger (no hardware) as Phase 1, magnetic reed switch as Phase 2
+- [ ] Reed switch + status LED: short magnet hold → flash diagnostic code, long hold (3s+) → enter BLE admin mode
 - [ ] Admin BLE interface: writable CMD + notifiable RESP characteristics, 5-min auto-timeout
 - [ ] Admin capabilities: live sensor readout, mode switching, test send, battery status, cache management
 - [ ] Bridge ring buffer for UART output (needed for 20+ hives to avoid dropped packets during 9600 baud TX)
 - [ ] Reflash both boards after `on_usb` struct removal
 - [ ] Bump `SLEEP_SECONDS` back to 300 for production
 - [ ] Evaluate 21700 battery form factor (~40-50% more capacity, same voltage, slightly larger holder needed)
+- [ ] Local diagnostics counters in NVS: total sends, sends since last charge, send failures, sensor errors. Reset charge counter when voltage transitions from charging→discharging.
 - [ ] Low-battery alert threshold (~3.4V) — flag in packet and/or trigger alert on C&C side
 - [ ] Battery rundown test with 21700 cell — compare discharge curve against 18650 baseline
 

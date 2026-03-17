@@ -136,6 +136,28 @@ Configurable via NVS (`Preferences` library), switchable at runtime via BLE admi
 - **Phase 1 (no hardware):** Triple-reset within 10 seconds detected via RTC memory counter
 - **Phase 2 (enclosure design):** Magnetic reed switch on a GPIO, triggered by holding a magnet to marked spot on enclosure. Fully sealed, waterproof.
 
+### Reed Switch + Status LED (Phase 2)
+A reed switch and LED together provide a zero-drain diagnostic interface:
+- **Short magnet hold**: LED flashes a diagnostic code, then system resumes normal operation
+- **Long magnet hold (3+ seconds)**: enters full BLE admin mode
+
+#### Status LED Flash Codes
+| Flash Sequence | Meaning |
+|---------------|---------|
+| 1 flash | System OK |
+| 2 flashes | ESP-NOW send failed last cycle |
+| 3 flashes | Sensor(s) offline |
+| Long blink | Low battery |
+| Rapid flashing | Cached data waiting (connectivity lost) |
+
+#### Power Impact
+Zero during normal operation — LED only draws current when magnet is physically held to the enclosure. Status from the last wake cycle is stored in RTC memory so it's available instantly when the reed switch activates.
+
+#### Hardware
+- Reed switch: GPIO D3 (input, internal pullup, active LOW when magnet present)
+- Status LED: GPIO D3 shared or separate pin + 330Ω resistor
+- Both fit inside the sealed enclosure, no holes needed
+
 ### Admin Mode Behavior
 - Starts BLE advertising with admin service
 - **5-minute auto-timeout** → returns to normal sleep cycle (battery safety net)
@@ -157,6 +179,21 @@ ESP-NOW broadcast has no delivery confirmation. If the bridge is offline, data i
 - On successful send (requires switching to **unicast ESP-NOW** for confirmation), mark as sent
 - Alternative: always cache, let the C&C deduplicate by timestamp
 - Flash handles ~100K write cycles per sector; LittleFS does wear leveling
+
+## Local Diagnostics Counters
+
+### Planned — stored in NVS
+| Counter | Description | Reset |
+|---------|-------------|-------|
+| `total_sends` | Lifetime successful ESP-NOW sends | Never (or manual via admin) |
+| `total_failures` | Lifetime failed sends | Never |
+| `sends_since_charge` | Sends since last battery charge | Auto-reset when voltage transitions from rising→falling (charge→discharge) |
+| `sensor_errors` | Count of sensor init failures | Never |
+| `boot_count` | Total wake cycles | Never |
+
+- All stored in **NVS** (survives power loss)
+- Readable via the BLE admin interface or the status LED diagnostic sequence
+- Could optionally include counters in the HivePacket for remote monitoring from the C&C
 
 ## Flashing Notes
 - Deep sleep disconnects USB — board won't appear as a serial device
