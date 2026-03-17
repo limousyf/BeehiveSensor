@@ -1,7 +1,7 @@
 # Audio Sensor — Technical Design Document
 
 ## Overview
-The Audio Sensor captures hive acoustics using an INMP441 I2S MEMS microphone. Sound analysis provides insight into colony health, queen status, swarming behavior, and overall activity levels. In production, this sensor will be integrated into the Hive Controller (XIAO ESP32C3).
+The Audio Sensor captures hive acoustics using an INMP441 I2S MEMS microphone. Sound analysis provides insight into colony health, queen status, swarming behavior, and overall activity levels. This is a standalone node running on a XIAO ESP32S3, separate from the Hive Controller (C3) which handles slow sensors (temp/humidity/scale).
 
 ## Hardware
 
@@ -15,7 +15,7 @@ The Audio Sensor captures hive acoustics using an INMP441 I2S MEMS microphone. S
 - Output: 24-bit I2S data (left-justified in 32-bit words)
 
 ### Test Platform: ESP32-WROOM-32
-Used for initial development. Production target is the XIAO ESP32C3 (different GPIO pins).
+Used for initial development. Production target is the XIAO ESP32S3.
 
 ### Pin Assignments (WROOM-32 — tested and working)
 | INMP441 Pin | ESP32 Pin | Function |
@@ -29,11 +29,12 @@ Used for initial development. Production target is the XIAO ESP32C3 (different G
 
 **Important:** SD and SCK labels can be confusing — if you get all zeros, try swapping these two wires.
 
-### Pin Assignments (XIAO ESP32C3 — planned)
-To be determined. Available GPIOs after I2C (D4/D5) and battery ADC (A0):
-- D0, D1, D2, D3, D6, D7, D8, D9, D10
+### Pin Assignments (XIAO ESP32S3 — planned)
+To be determined. The S3 has plenty of available GPIOs for I2S (3 pins: SD, SCK, WS).
 
-I2S needs 3 pins (SD, SCK, WS). These must avoid boot-strapping pins on the C3.
+### Power Architecture
+- **Prototyping:** dedicated 18650 battery for the S3 audio node
+- **Production:** single battery + shared charge controller powering both C3 and S3 boards
 
 ## I2S Configuration
 - Sample rate: 16,000 Hz (sufficient for bee sounds up to 8kHz Nyquist)

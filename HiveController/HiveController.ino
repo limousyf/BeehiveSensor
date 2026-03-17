@@ -46,6 +46,9 @@ const char SENSOR_ID[20] = "HIVE_NODE_01";
 // Battery voltage ADC pin
 #define BATT_ADC_PIN A0
 
+// Low battery cutoff — sleep indefinitely below this voltage to protect unprotected cells
+#define BATT_CUTOFF_V 3.0
+
 // Sensor status flags (bitmask)
 #define STATUS_BME280_OK  0x01
 
@@ -151,6 +154,16 @@ void setup() {
 
   Serial.println("\n--- Hive Controller Starting ---");
   Serial.printf("Sensor ID: %s\n", SENSOR_ID);
+
+  // Check battery voltage — protect unprotected cells from over-discharge
+  float bootVoltage = readBatteryVoltage();
+  Serial.printf("Battery: %.2fV\n", bootVoltage);
+  if (bootVoltage < BATT_CUTOFF_V && bootVoltage > 0.5) {
+    // Below 0.5V means no battery / no voltage divider — skip check
+    Serial.println("[CRIT] Battery too low! Sleeping indefinitely.");
+    Serial.flush();
+    esp_deep_sleep(0);  // Sleep forever — only USB/reset wakes it
+  }
 
   // Init BME280 (non-fatal if missing)
   Wire.begin(I2C_SDA, I2C_SCL);

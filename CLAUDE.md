@@ -47,10 +47,20 @@ Pi Zero W (Yard C&C)
 {"sensor_id":"HIVE_NODE_01","bme280":"offline","batt_v":4.16,"batt_pct":96}
 ```
 
+### Hive Controller Split Architecture
+The Hive Controller is two physically separate boards per hive:
+- **C3 node (XIAO ESP32C3)**: BME280 (temp/humidity/pressure) + HX711 (scale) — slow sensors, deep sleep friendly
+- **S3 node (XIAO ESP32S3)**: INMP441 (audio) — fast sensor, needs continuous sampling windows
+
+Prototyping: separate 18650 battery per board.
+Production: single battery + shared charge controller powering both boards.
+
+Both nodes transmit independently via ESP-NOW to the bridge.
+
 ### Sensor Status Bitmask
-- Bit 0 (0x01): BME280
-- Bit 1 (0x02): reserved for HX711 scale (Phase 1)
-- Bit 2 (0x04): reserved for INMP441 mic (Phase 2)
+- Bit 0 (0x01): BME280 (C3 node)
+- Bit 1 (0x02): HX711 scale (C3 node, Phase 1)
+- Bit 2 (0x04): INMP441 mic (S3 node, Phase 2)
 
 ### TODO
 - [ ] Configurable sleep modes via NVS (rapid/battery-saver/hybrid) with RTC memory for burst counters
@@ -59,8 +69,12 @@ Pi Zero W (Yard C&C)
 - [ ] Admin mode: multi-reset trigger (no hardware) as Phase 1, magnetic reed switch as Phase 2
 - [ ] Admin BLE interface: writable CMD + notifiable RESP characteristics, 5-min auto-timeout
 - [ ] Admin capabilities: live sensor readout, mode switching, test send, battery status, cache management
+- [ ] Bridge ring buffer for UART output (needed for 20+ hives to avoid dropped packets during 9600 baud TX)
 - [ ] Reflash both boards after `on_usb` struct removal
 - [ ] Bump `SLEEP_SECONDS` back to 300 for production
+- [ ] Evaluate 21700 battery form factor (~40-50% more capacity, same voltage, slightly larger holder needed)
+- [ ] Low-battery alert threshold (~3.4V) — flag in packet and/or trigger alert on C&C side
+- [ ] Battery rundown test with 21700 cell — compare discharge curve against 18650 baseline
 
 ### Development Phases
 - [x] Phase 0: Hive Controller telemetry baseline (T&H + battery + fault tolerance)
